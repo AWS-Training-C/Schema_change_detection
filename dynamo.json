@@ -1,0 +1,216 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Parameters": {
+        "lambdaS3Bucket": {
+            "Default": "sunnys3bucketlambda",
+            "Description": "AWS S3 Name",
+            "Type": "String"
+        }
+    },
+    "Resources": {
+        "Snstopic": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {
+                "Subscription": [
+                    {
+                        "Endpoint": "sunnysrinivasraj@gmail.com",
+                        "Protocol": "email"
+                    }
+                ],
+                "DisplayName": "dynamo",
+                "FifoTopic": "False",
+                "TopicName": "DynamoMessagesender"
+            }
+        },
+        "lambdadynamoRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "RoleName": "lambda-kinesis-role",
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "lambda.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "Description": "Lambda Policy",
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "dynamodblamdapolicy",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "sns:Publish",
+                                    "Resource": "arn:aws:sns:us-east-2:152669422470:DynamoMessagesender"
+                                },
+                                {
+                                    "Sid": "LogAccess",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:*"
+                                    ],
+                                    "Resource": "arn:aws:logs:*:*:*"
+                                },
+                                {
+                                    "Sid": "AccessGameScoresStreamOnly",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "dynamodb:DescribeStream",
+                                        "dynamodb:GetRecords",
+                                        "dynamodb:GetShardIterator",
+                                        "dynamodb:ListStreams"
+                                    ],
+                                    "Resource": "arn:aws:dynamodb:us-east-2:152669422470:table/myTableName/stream/*"
+                                },
+                                {
+                                    "Sid": "ReadWriteTable",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "dynamodb:BatchGetItem",
+                                        "dynamodb:GetItem",
+                                        "dynamodb:Query",
+                                        "dynamodb:Scan",
+                                        "dynamodb:BatchWriteItem",
+                                        "dynamodb:PutItem",
+                                        "dynamodb:UpdateItem"
+                                    ],
+                                    "Resource": "arn:aws:dynamodb:us-east-2:152669422470:table/myTableName"
+                                },
+                                {
+                                    "Sid": "readandwriteaccess",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:Get*",
+                                        "s3:List*",
+                                        "s3:Describe*",
+                                        "s3:GetObject",
+                                        "s3:GetObjectVersion",
+                                        "s3:PutObject"
+                                    ],
+                                    "Resource": [
+                                        {
+                                            "Fn::Join": [
+                                                "",
+                                                [
+                                                    "arn:aws:s3:::",
+                                                    {
+                                                        "Ref": "lambdaS3Bucket"
+                                                    }
+                                                ]
+                                            ]
+                                        },
+                                        {
+                                            "Fn::Join": [
+                                                "",
+                                                [
+                                                    "arn:aws:s3:::",
+                                                    {
+                                                        "Ref": "lambdaS3Bucket"
+                                                    },
+                                                    "/*"
+                                                ]
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "lambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "FunctionName": "dynamo_function",
+                "Handler": "lambda_function.lambda_handler",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "lambdadynamoRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python3.8",
+                "Code": {
+                    "S3Bucket": "sunnys3bucketlambda",
+                    "S3Key": "function.zip"
+                }
+            }
+        },
+        "dynamoEventSourceMapping": {
+            "Type": "AWS::Lambda::EventSourceMapping",
+            "Properties": {
+                "EventSourceArn": {
+                    "Fn::GetAtt": [
+                        "myDynamoDBTable",
+                        "StreamArn"
+                    ]
+                },
+                "FunctionName": {
+                    "Fn::GetAtt": [
+                        "lambdaFunction",
+                        "Arn"
+                    ]
+                },
+                "BatchSize": 100,
+                "StartingPosition": "LATEST",
+                "Enabled": true,
+                "MaximumBatchingWindowInSeconds": 10,
+                "MaximumRetryAttempts": 10,
+                "ParallelizationFactor": 10,
+                "FilterCriteria": {
+                    "Filters": [
+                        {
+                            "Pattern": "{ \"eventName\": [\"DELETE\"]}"
+
+                        },
+                        {
+                            "Pattern": "{ \"eventName\": [\"MODIFY\"]}"
+                        }
+                    ]
+                }
+            }
+        },
+        "myDynamoDBTable": {
+            "Type": "AWS::DynamoDB::Table",
+            "Properties": {
+                "AttributeDefinitions": [
+                    {
+                        "AttributeName": "ID",
+                        "AttributeType": "N"
+                    },
+                    {
+                        "AttributeName": "name",
+                        "AttributeType": "S"
+                    }
+                ],
+                "KeySchema": [
+                    {
+                        "AttributeName": "ID",
+                        "KeyType": "HASH"
+                    },
+                    {
+                        "AttributeName": "name",
+                        "KeyType": "RANGE"
+                    }
+                ],
+                "StreamSpecification": {
+                    "StreamViewType": "NEW_AND_OLD_IMAGES"
+                },
+                "ProvisionedThroughput": {
+                    "ReadCapacityUnits": "5",
+                    "WriteCapacityUnits": "5"
+                },
+                "TableName": "myTableName"
+            }
+        }
+    }
+}
